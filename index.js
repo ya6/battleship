@@ -149,21 +149,25 @@ function dispatchReq(rawRequest, current_connection) {
       if (index_player !== Number(db.games[game_id].turn)) {
         return;
       }
-      const atttac_res = {
-        type: "attack",
+      //check
+      const { status, coords } = checkShot(data);
+      //
+      coords.forEach((coord) => {
+        const atttac_res = {
+          type: "attack",
+          data: JSON.stringify({
+            position: {
+              x: coord[0],
+              y: coord[1],
+            },
+            currentPlayer: index_player,
+            status: status,
+          }),
+          id: 0,
+        };
 
-        data: JSON.stringify({
-          position: {
-            x,
-            y,
-          },
-          currentPlayer: index_player,
-          status: "miss",
-        }),
-        id: 0,
-      };
-
-      sendToAllLogged(atttac_res);
+        sendToAllLogged(atttac_res);
+      });
       sendTurn(game_id);
       break;
 
@@ -218,9 +222,8 @@ function sendTurn(gameId) {
 
 function setField(current_connection, gameId, ships) {
   db.games[gameId].board[current_connection].field = ships;
-  // console.log("ships-->", ships);
   const field = db.games[gameId].board[current_connection].field;
-  console.log("field 1 -->", field);
+
   field.forEach((ship, ind) => {
     const coords = [];
     let dx = 0;
@@ -229,9 +232,31 @@ function setField(current_connection, gameId, ships) {
       ship.direction === true ? (dy = c) : (dx = c);
       coords.push([ship.position.x + dx, ship.position.y + dy]);
     }
-    field[ind] = { ...ship, coords };
+    field[ind] = { ...ship, coords, origin_coords: coords };
   });
-  console.log("field 2 -->", field[0]);
+}
+function checkShot(data) {
+  const { x, y, gameId, indexPlayer } = JSON.parse(data);
+  const field = db.games[gameId].board[String(indexPlayer)].field;
+  let status = "miss";
+  let coords = [[x, y]];
+  field.forEach((ship, idx) => {
+    const before_ship_size = ship.coords.length;
+    if (before_ship_size > 0) {
+      const new_coords = ship.coords.filter((el) => !(el[0] === x && el[1] === y));
+      field[idx].coords = new_coords;
+      const after_sip_size = new_coords.length;
+      console.log(` ${before_ship_size}-+++-${after_sip_size}`);
+      if (after_sip_size === 0) {
+        status = "killed";
+        coords = field[idx].origin_coords;
+      } else if (before_ship_size - after_sip_size === 1) {
+        status = "shot";
+      }
+    }
+  });
+
+  return { status, coords: coords };
 }
 // console.dir(util.inspect(ws, { showHidden: false, depth: false, colors: true }));
 // const res = structuredClone(newUser);
