@@ -1,5 +1,5 @@
 import { httpServer } from "./src/http_server/server";
-import WebSocket, { WebSocketServer } from "ws";
+import { WebSocketServer } from "ws";
 const HTTP_PORT = 8181;
 const db = {
   connections: {},
@@ -19,7 +19,6 @@ wss.on("connection", (ws) => {
   console.log("connections--->", Object.keys(db.connections));
 
   ws.on("message", (raw_data) => {
-    // mDispatcher(rawData, current_connection);
     dispatchReq(raw_data, current_connection);
   });
   ws.on("close", () => {
@@ -36,7 +35,7 @@ function dispatchReq(rawRequest, current_connection) {
   const json_object = JSON.parse(rawRequest);
   let res;
 
-  console.log("req-->", json_object);
+  // console.log("req-->", json_object);
 
   const { type, data } = json_object;
   switch (type) {
@@ -73,6 +72,11 @@ function dispatchReq(rawRequest, current_connection) {
       break;
 
     case "create_room":
+      db.rooms.forEach((room) => {
+        if (room.roomUsers[0].index === Number(current_connection)) {
+          return;
+        }
+      });
       const new_room = {
         roomId: db.rooms.length,
         roomUsers: [],
@@ -88,6 +92,9 @@ function dispatchReq(rawRequest, current_connection) {
 
     case "add_user_to_room":
       const { indexRoom } = JSON.parse(data);
+      if (db.rooms[indexRoom].roomUsers[0].index === Number(current_connection)) {
+        return;
+      }
 
       //create game
       const new_game = {
@@ -98,8 +105,7 @@ function dispatchReq(rawRequest, current_connection) {
         board: {},
         turn: !!Math.round(Math.random()) ? String(db.rooms[indexRoom].roomUsers[0].index) : current_connection,
       };
-      console.log(`pl1 ${new_game.player_1}   pl2 ${new_game.player_2}`);
-      // console.log("turn-->", new_game.turn);
+
       db.games.push(new_game);
 
       //clean room
@@ -111,7 +117,6 @@ function dispatchReq(rawRequest, current_connection) {
         data: { idGame: new_game.idGame, idPlayer: Number(new_game.player_2) },
         id: 0,
       };
-      console.log(`cr game cur${current_connection}  op ${new_game.player_2}`);
       const res_1 = { ...new_game_res, data: JSON.stringify(new_game_res.data) };
       sendToOne(res_1, new_game.player_1);
       let res_2 = { ...new_game_res };
@@ -248,44 +253,43 @@ function checkShot(data) {
       const after_sip_size = new_coords.length;
       if (after_sip_size === 0) {
         //killed
+        db.games[gameId].board[String(indexPlayer)].ships_on -= 1;
         coords = [];
         field[idx].origin_coords.forEach((el) => {
           el[2] = "killed";
           coords.push(el);
-          db.games[gameId].board[String(indexPlayer)].ships_on -= 1;
-
-          ///have to be 0 !!! win!!!
-          if (db.games[gameId].board[String(indexPlayer)].ships_on <= 0) {
-            const winner_id = String(indexPlayer) === db.games[gameId].player_1 ? db.games[gameId].player_2 : db.games[gameId].player_1;
-
-            db.users[String(winner_id)].wins += 1; //add win to player
-            let wins_table = [];
-            for (const user in db.users) {
-              if (Object.hasOwnProperty.call(db.users, user)) {
-                if (db.users[user].wins > 0) {
-                  wins_table.push({ name: db.users[user].name, wins: db.users[user].wins });
-                }
-              }
-            }
-
-            //send winner
-            const res = {
-              type: "finish",
-              data: JSON.stringify({
-                winPlayer: indexPlayer,
-              }),
-              id: 0,
-            };
-            sendToAllLogged(res);
-
-            const wins_res = {
-              type: "update_winners",
-              data: JSON.stringify(wins_table),
-              id: 0,
-            };
-            sendToAllLogged(wins_res);
-          }
         });
+        ///have to be 0 !!! win!!!
+        if (db.games[gameId].board[String(indexPlayer)].ships_on <= 0) {
+          const winner_id = String(indexPlayer) === db.games[gameId].player_1 ? db.games[gameId].player_2 : db.games[gameId].player_1;
+
+          db.users[String(winner_id)].wins += 1; //add win to player
+
+          let wins_table = [];
+
+          for (const user in db.users) {
+            if (db.users[user].wins > 0) {
+              wins_table.push({ name: db.users[user].name, wins: db.users[user].wins });
+            }
+          }
+
+          //send winner
+          const res = {
+            type: "finish",
+            data: JSON.stringify({
+              winPlayer: indexPlayer,
+            }),
+            id: 0,
+          };
+          sendToAllLogged(res);
+          const wins_res = {
+            type: "update_winners",
+            data: JSON.stringify(wins_table),
+            id: 0,
+          };
+          sendToAllLogged(wins_res);
+        }
+
         field[idx].area.forEach((el) => {
           el[2] = "miss";
           coords.push(el);
@@ -294,20 +298,19 @@ function checkShot(data) {
         db.games[gameId].turn = turn;
       } else if (before_ship_size - after_sip_size === 1) {
         coords[0][2] = "shot";
+
+        const turn = db.games[gameId].turn === db.games[gameId].player_1 ? db.games[gameId].player_2 : db.games[gameId].player_1;
+        db.games[gameId].turn = turn;
       }
     }
   });
-  if (coords[0][2] !== "miss") {
-    const turn = db.games[gameId].turn === db.games[gameId].player_1 ? db.games[gameId].player_2 : db.games[gameId].player_1;
-    db.games[gameId].turn = turn;
-  }
+
   return coords;
 }
 
 function sendTurn(gameId) {
   const turn = db.games[gameId].turn === db.games[gameId].player_1 ? db.games[gameId].player_2 : db.games[gameId].player_1;
   db.games[gameId].turn = turn;
-  console.log(`turn ->`, db.games[gameId].turn);
   const res = {
     type: "turn",
     data: JSON.stringify({
@@ -341,5 +344,3 @@ function sendShots(coords, index_player) {
     sendToAllLogged(atttac_res);
   });
 }
-// console.dir(util.inspect(ws, { showHidden: false, depth: false, colors: true }));
-// const res = structuredClone(newUser);
