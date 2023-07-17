@@ -11,12 +11,30 @@ console.log(`Start static http server on the ${HTTP_PORT} port!`);
 httpServer.listen(HTTP_PORT);
 
 //wss server
-const wss = new WebSocketServer({ port: 3000 });
+const wss = new WebSocketServer({ port: 3000 }, process.stdout.write(`WebSocketServer started `));
+process.stdout.write("with " + JSON.stringify(wss.address()) + "\n");
+
+process.on("SIGINT", function () {
+  console.log("Soft shutdown");
+  wss.clients.forEach((socket) => {
+    console.log(`Connection closed`);
+    socket.close();
+
+    process.nextTick(() => {
+      if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
+        console.log(`Connections terminated`);
+        socket.terminate();
+      }
+    });
+  });
+
+  process.exit();
+});
 
 wss.on("connection", (ws) => {
   const current_connection = genNumdersToken(5);
   db.connections[current_connection] = ws;
-  console.log("connections--->", Object.keys(db.connections));
+  console.log("Connections: ", Object.keys(db.connections));
 
   ws.on("message", (raw_data) => {
     dispatchReq(raw_data, current_connection);
@@ -27,7 +45,7 @@ wss.on("connection", (ws) => {
 
     delete db.connections[current_connection];
     delete db.users[current_connection];
-    console.log("closed");
+    console.log(`Connection ${current_connection} closed`);
   });
 });
 
@@ -35,7 +53,7 @@ function dispatchReq(rawRequest, current_connection) {
   const json_object = JSON.parse(rawRequest);
   let res;
 
-  // console.log("req-->", json_object);
+  console.log("Request: ", json_object);
 
   const { type, data } = json_object;
   switch (type) {
@@ -179,10 +197,12 @@ function dispatchReq(rawRequest, current_connection) {
 }
 
 function sendToOne(res, current_connection) {
+  console.log("Response: ", res);
   db.connections[current_connection].send(JSON.stringify(res));
 }
 
 function sendToAllLogged(res) {
+  console.log("Response: ", res);
   for (const key in db.users) {
     db.connections[key].send(JSON.stringify(res));
   }
