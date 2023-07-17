@@ -1,31 +1,29 @@
 import { httpServer } from "./src/http_server/server";
 import { WebSocketServer } from "ws";
+import { genNumdersToken } from "./src/wss_server/genNumdersToken";
+import { random } from "./src/wss_server/random";
+import { DB, Ship } from "./src/wss_server/types";
+
 const HTTP_PORT = 8181;
-const db = {
+export const db: DB = {
   connections: {},
   users: {},
   games: [],
   rooms: [],
 };
+
 console.log(`Start static http server on the ${HTTP_PORT} port!`);
 httpServer.listen(HTTP_PORT);
 
 //wss server
-const wss = new WebSocketServer({ port: 3000 }, process.stdout.write(`WebSocketServer started `));
-process.stdout.write("with " + JSON.stringify(wss.address()) + "\n");
+const wss = new WebSocketServer({ port: 3000 });
+process.stdout.write("WebSocketServer started with " + JSON.stringify(wss.address()) + "\n");
 
 process.on("SIGINT", function () {
   console.log("Soft shutdown");
   wss.clients.forEach((socket) => {
     console.log(`Connection closed`);
     socket.close();
-
-    process.nextTick(() => {
-      if ([socket.OPEN, socket.CLOSING].includes(socket.readyState)) {
-        console.log(`Connections terminated`);
-        socket.terminate();
-      }
-    });
   });
 
   process.exit();
@@ -49,7 +47,7 @@ wss.on("connection", (ws) => {
   });
 });
 
-function dispatchReq(rawRequest, current_connection) {
+function dispatchReq(rawRequest, current_connection: string) {
   const json_object = JSON.parse(rawRequest);
   let res;
 
@@ -91,18 +89,20 @@ function dispatchReq(rawRequest, current_connection) {
 
     case "create_room":
       db.rooms.forEach((room) => {
+        //add type
         if (room.roomUsers[0].index === Number(current_connection)) {
           return;
         }
       });
-      const new_room = {
+      const new_room: { roomId: Number; roomUsers: any[] } = {
         roomId: db.rooms.length,
         roomUsers: [],
       };
-      new_room.roomUsers.push({
+      const _user = {
         name: db.users[current_connection].name,
         index: db.users[current_connection].index,
-      });
+      };
+      new_room.roomUsers.push(_user);
 
       db.rooms.push(new_room);
       sendToAllUpatedRooms();
@@ -137,9 +137,11 @@ function dispatchReq(rawRequest, current_connection) {
       };
       const res_1 = { ...new_game_res, data: JSON.stringify(new_game_res.data) };
       sendToOne(res_1, new_game.player_1);
-      let res_2 = { ...new_game_res };
-      res_2.data.idPlayer = Number(new_game.player_1);
-      res_2.data = JSON.stringify(new_game_res.data);
+      //
+      let data_2 = new_game_res.data;
+      data_2.idPlayer = Number(new_game.player_1);
+      const res_2 = { ...new_game_res, data: JSON.stringify(data_2) };
+
       sendToOne(res_2, new_game.player_2);
 
       break;
@@ -196,22 +198,11 @@ function dispatchReq(rawRequest, current_connection) {
   }
 }
 
-function sendToOne(res, current_connection) {
-  console.log("Response: ", res);
-  db.connections[current_connection].send(JSON.stringify(res));
-}
-
 function sendToAllLogged(res) {
   console.log("Response: ", res);
   for (const key in db.users) {
     db.connections[key].send(JSON.stringify(res));
   }
-}
-
-function genNumdersToken(length = 10) {
-  const base = 10 ** length;
-  const token = Math.floor(base + Math.random() * 9 * base).toString(); // token
-  return token;
 }
 
 function sendToAllUpatedRooms() {
@@ -223,13 +214,18 @@ function sendToAllUpatedRooms() {
   sendToAllLogged(update_room_res);
 }
 
+function sendToOne(res, current_connection) {
+  console.log("Response: ", res);
+  db.connections[current_connection].send(JSON.stringify(res));
+}
+
 function setField(current_connection, gameId, ships) {
   db.games[gameId].board[current_connection].field = ships;
   const field = db.games[gameId].board[current_connection].field;
   db.games[gameId].board[current_connection].ships_on = 10;
 
-  field.forEach((ship, ind) => {
-    const coords = [];
+  field.forEach((ship: Ship, ind: number) => {
+    const coords: any[] = [];
     let dx = 0;
     let dy = 0;
     for (let c = 0; c < ship.length; c++) {
@@ -285,7 +281,7 @@ function checkShot(data) {
 
           db.users[String(winner_id)].wins += 1; //add win to player
 
-          let wins_table = [];
+          let wins_table: any[] = [];
 
           for (const user in db.users) {
             if (db.users[user].wins > 0) {
@@ -341,11 +337,6 @@ function sendTurn(gameId) {
   sendToAllLogged(res);
 }
 
-function random(min = 0, max = 9) {
-  const rand = Math.floor(Math.random() * (max - min) + min);
-  return rand;
-}
-
 function sendShots(coords, index_player) {
   coords.forEach((coord) => {
     const atttac_res = {
@@ -360,7 +351,6 @@ function sendShots(coords, index_player) {
       }),
       id: 0,
     };
-
     sendToAllLogged(atttac_res);
   });
 }
